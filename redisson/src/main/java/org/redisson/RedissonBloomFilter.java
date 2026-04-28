@@ -277,7 +277,7 @@ public class RedissonBloomFilter<T> extends RedissonExpirable implements RBloomF
                           "for i = 4, #ARGV, 1 do " +
                               "local r = redis.call('getbit', KEYS[2], ARGV[i]); " +
                               "if r == 0 then " +
-                                  "k = 1;" +
+                                  "k = k + 1;" +
                               "end; " +
                               "if ((i - 4) + 1) % cc == 0 then " +
                                   "if k == 0 then " +
