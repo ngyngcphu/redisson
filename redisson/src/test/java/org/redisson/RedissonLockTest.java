@@ -503,7 +503,7 @@ public class RedissonLockTest extends BaseConcurrentTest {
             @Override
             public RFuture<Void> unlockAsync(long threadId) {
                 if (renewalScheduler.isLockSetEmpty()) {
-                    // Expect lock set is not empty exists before unlocking, but found empty.
+                    // Expect lock set is not empty before unlocking, but found empty.
                     // Thus, background renewal task cannot see this lock name to refresh ttl
                     emptyLockSet.set(true);
                 }
