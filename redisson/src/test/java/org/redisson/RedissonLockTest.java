@@ -1,17 +1,22 @@
 package org.redisson;
 
+import org.joor.Reflect;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.redisson.api.*;
 import org.redisson.client.*;
 import org.redisson.client.protocol.RedisCommands;
 import org.redisson.config.Config;
+import org.redisson.renewal.LockEntry;
+import org.redisson.renewal.LockTask;
 import org.testcontainers.containers.GenericContainer;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -502,11 +507,17 @@ public class RedissonLockTest extends BaseConcurrentTest {
         RLock instrumentedLock = new RedissonLock(client.getCommandExecutor(), "1testConcurrencyTryLockUnLock") {
             @Override
             public RFuture<Void> unlockAsync(long threadId) {
-                if (renewalScheduler.isLockSetEmpty()) {
-                    // Expect lock set is not empty before unlocking, but found empty.
-                    // Thus, background renewal task cannot see this lock name to refresh ttl
-                    emptyLockSet.set(true);
+                AtomicReference<LockTask> reference = Reflect.on(renewalScheduler).get("reference");
+                LockTask task = reference.get();
+                if (task != null) {
+                    Map<String, LockEntry> name2entry = Reflect.on(task).get("name2entry");
+                    if (name2entry.isEmpty()) {
+                        // Expect lock set is not empty exists before unlocking, but found empty.
+                        // Thus, background renewal task cannot see this lock name to refresh ttl
+                        emptyLockSet.set(true);
+                    }
                 }
+
                 return super.unlockAsync(threadId);
             }
         };
