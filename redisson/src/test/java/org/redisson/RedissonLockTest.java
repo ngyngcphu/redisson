@@ -1,20 +1,22 @@
 package org.redisson;
 
+import org.joor.Reflect;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.redisson.api.DeletedObjectListener;
-import org.redisson.api.ExpiredObjectListener;
-import org.redisson.api.RLock;
-import org.redisson.api.RedissonClient;
+import org.redisson.api.*;
 import org.redisson.client.*;
 import org.redisson.client.protocol.RedisCommands;
 import org.redisson.config.Config;
+import org.redisson.renewal.LockEntry;
+import org.redisson.renewal.LockTask;
 import org.testcontainers.containers.GenericContainer;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +24,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 
 public class RedissonLockTest extends BaseConcurrentTest {
-
     static class LockWithoutBoolean extends Thread {
         private CountDownLatch latch;
         private RedissonClient redisson;
@@ -495,6 +496,49 @@ public class RedissonLockTest extends BaseConcurrentTest {
         thread1.start();
         thread1.join();
         lock.unlock();
+    }
+
+    @Test
+    public void testConcurrencyTryLockUnLock() throws InterruptedException {
+        Redisson client =  (Redisson) redisson;
+
+        AtomicBoolean emptyLockSet = new AtomicBoolean();
+
+        RLock instrumentedLock = new RedissonLock(client.getCommandExecutor(), "1testConcurrencyTryLockUnLock") {
+            @Override
+            public RFuture<Void> unlockAsync(long threadId) {
+                AtomicReference<LockTask> reference = Reflect.on(renewalScheduler).get("reference");
+                LockTask task = reference.get();
+                if (task != null) {
+                    Map<String, LockEntry> name2entry = Reflect.on(task).get("name2entry");
+                    if (name2entry.isEmpty()) {
+                        // Expect lock set is not empty exists before unlocking, but found empty.
+                        // Thus, background renewal task cannot see this lock name to refresh ttl
+                        emptyLockSet.set(true);
+                    }
+                }
+
+                return super.unlockAsync(threadId);
+            }
+        };
+
+        int threads = 16;
+
+        ExecutorService executorService = Executors.newFixedThreadPool(threads);
+        for (int i = 0; i < threads; i++) {
+            executorService.submit(() -> {
+                for (int k = 0; k < 10_000; k++) {
+                    if (instrumentedLock.tryLock()) {
+                        instrumentedLock.unlock();
+                    }
+                }
+            });
+        }
+
+        executorService.shutdown();
+        executorService.awaitTermination(100, TimeUnit.SECONDS);
+
+        assertThat(emptyLockSet.get()).isFalse();
     }
 
 
